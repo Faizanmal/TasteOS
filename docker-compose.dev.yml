@@ -1,0 +1,58 @@
+# TasteOS — Local Full-Stack Development Compose
+# Runs PostgreSQL, FastAPI (reload), and Next.js (dev server)
+# Usage: docker compose -f docker-compose.dev.yml up --build
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tasteos
+      POSTGRES_PASSWORD: tasteos
+      POSTGRES_DB: tasteos
+    ports:
+      - "5432:5432"
+    volumes:
+      - tasteos_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tasteos -d tasteos"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      APP_ENV: development
+      TASTEOS_MODE: ${TASTEOS_MODE:-demo}
+      QLOO_BASE_URL: ${QLOO_BASE_URL:-https://hackathon.api.qloo.com}
+      DATABASE_URL: postgresql+psycopg://tasteos:tasteos@db:5432/tasteos
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --hostname 0.0.0.0 --port 3000"
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    volumes:
+      - ./apps/web:/app
+      - web_node_modules:/app/node_modules
+    depends_on:
+      - api
+
+volumes:
+  tasteos_pg:
+  web_node_modules:
+

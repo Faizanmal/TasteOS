@@ -1,0 +1,69 @@
+# Secrets — never commit real credentials
+.env
+**/.env
+.env.*
+**/.env.*
+!.env.example
+!**/.env.example
+!**/.env.local.example
+.env.local
+.env.*.local
+*.pem
+apps/api/.env
+apps/web/.env.local
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Node
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local data
+*.db
+*.sqlite3
+data/
+apps/api/data/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Docker
+.docker/
+
+# Misc
+.turbo/
+.vercel/
+playwright-report/
+test-results/
+
+# Local-only scratch / phase notes (not for public repo)
+.cache/
+.tmp/
+*.tmp.md
+*.tmp.txt
+apps/web/AGENTS.md
