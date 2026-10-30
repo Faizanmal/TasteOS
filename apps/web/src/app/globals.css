@@ -286,6 +286,105 @@ h1, h2, h3 { font-family: var(--font-display), serif; }
 }
 .editor-card .field input { font-size: .85rem; }
 
+.favorite-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  min-height: 2rem;
+  margin-bottom: .55rem;
+}
+.favorite-empty {
+  font-size: .8rem;
+  color: var(--ink-soft);
+}
+.favorite-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  font-size: .72rem;
+  border: 1px solid var(--line);
+  background: rgba(251, 250, 246, .85);
+  padding: .28rem .45rem .28rem .65rem;
+  color: var(--ink);
+}
+.favorite-chip.unresolved {
+  border-style: dashed;
+  color: var(--ink-soft);
+}
+.favorite-chip-remove {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 .15rem;
+  opacity: .65;
+}
+.favorite-chip-remove:hover { opacity: 1; color: var(--error); }
+.favorite-hint {
+  margin: 0 0 .55rem;
+  font-size: .72rem;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+.favorite-add-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: .45rem;
+  align-items: stretch;
+}
+.favorite-add-btn {
+  height: 48px;
+  padding-inline: 1rem;
+  white-space: nowrap;
+}
+.favorite-picker {
+  margin-top: .65rem;
+  border: 1px solid var(--line);
+  background: rgba(251, 250, 246, .9);
+  padding: .75rem;
+}
+.favorite-picker ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: .35rem;
+}
+.favorite-pick-option {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink);
+  padding: .45rem .55rem;
+  cursor: pointer;
+  font-size: .8rem;
+}
+.favorite-pick-option:hover,
+.favorite-pick-option.top {
+  border-color: var(--copper);
+  background: rgba(173, 96, 56, .08);
+}
+.favorite-pick-option span {
+  color: var(--ink-soft);
+  font-size: .68rem;
+}
+.favorite-picker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  margin-top: .65rem;
+}
+.favorite-picker-actions .button {
+  height: 40px;
+  font-size: .78rem;
+}
+
 .overlap-panel {
   margin-top: 2.5rem;
   padding-top: 2rem;

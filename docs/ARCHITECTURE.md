@@ -46,7 +46,7 @@ flowchart LR
 | Stage | Module | Responsibility |
 | --- | --- | --- |
 | 1 | `TasteProfileResolver` | Load demo or DB profiles; normalize favorites/exclusions |
-| 2 | `CulturalCandidateRetriever` | Call verified Qloo client **or** labeled demo `insights_demo` |
+| 2 | `CulturalCandidateRetriever` | **Live:** Qloo Search (resolve favorites → UUIDs) then Insights (taste + location). **Demo:** labeled `insights_demo` |
 | 3 | `ConstraintEvaluator` | Hard exclusions, rejections, budget tag filters |
 | 4 | `NegotiationEngine` | Deterministic `tasteos_negotiation_v1` ranking |
 | 5 | `PlanComposer` | Proposed itinerary stops (`is_proposed=true`) |
@@ -98,8 +98,10 @@ Clamped to `[0, 1]`. Sort by `−app_rank_score`, then name (deterministic).
 
 - Qloo does **not** guarantee group consensus.
 - Itineraries are **proposals** — no reservations/availability/bookings.
-- Demo candidates are labeled `tasteos_demo_dataset`.
+- Demo candidates are labeled `tasteos_demo_dataset` (local/demo mode only — public Cloud Run is live).
+- Favorites without valid Qloo entity UUIDs are omitted from live Insights signals (with a limitation note).
 - Unknown evidence stays `unknown`.
+- Without Qloo (no live key / no resolvable entities and no location), there are no taste-based recommendations.
 
 ## Persistence
 

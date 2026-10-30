@@ -5,6 +5,7 @@
   base = "apps/web"
   command = "npm run build"
   publish = ".next"
+  environment = { NEXT_PUBLIC_API_BASE_URL = "https://tasteos-api-845068580921.us-central1.run.app" }
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"

@@ -5,13 +5,15 @@ FastAPI backend — anonymous profiles, Qloo-backed recommendations, Group Conci
 ```bash
 # from repo root
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1   # Windows PowerShell
-# source .venv/bin/activate    # Unix
+# Windows PowerShell: .\.venv\Scripts\Activate.ps1
+# Linux/macOS:        source .venv/bin/activate
 pip install -e "apps/api[dev]"
-cp .env.example .env
+cp .env.example .env   # Windows: Copy-Item .env.example .env
 cd apps/api
 uvicorn app.main:app --reload --port 8000
 ```
+
+Production API (live Qloo on Cloud Run): https://tasteos-api-845068580921.us-central1.run.app/docs
 
 OpenAPI: http://localhost:8000/docs · Health: http://localhost:8000/health
 

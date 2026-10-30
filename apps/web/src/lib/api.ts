@@ -14,7 +14,45 @@ export type Favorite = {
   entity_type: string;
   image_url?: string | null;
   description?: string | null;
+  /** True when search found no Qloo match — kept for display only. */
+  unresolved?: boolean;
 };
+
+export type SearchEntity = {
+  name: string;
+  entity_id: string;
+  type?: string | null;
+  subtype?: string | null;
+  properties?: {
+    description?: string | null;
+    image?: { url?: string | null } | null;
+  } | null;
+};
+
+export type SearchResponse = {
+  mode: string;
+  source: string;
+  results: SearchEntity[];
+  meta?: Record<string, unknown>;
+};
+
+const QLOO_ENTITY_UUID_RE =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+export function isQlooEntityId(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return QLOO_ENTITY_UUID_RE.test(value.trim());
+}
+
+export function isUnresolvedFavorite(favorite: Favorite): boolean {
+  return Boolean(
+    favorite.unresolved ||
+      favorite.entity_id.startsWith("unresolved-") ||
+      favorite.entity_id.startsWith("local-") ||
+      (!isQlooEntityId(favorite.entity_id) &&
+        !favorite.entity_id.startsWith("demo-")),
+  );
+}
 
 export type Profile = {
   id: string;
@@ -196,6 +234,13 @@ export const deleteProfile = (id: string) =>
   request<void>(`/api/v1/profiles/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
+export const searchEntities = (query: string, take = 6) => {
+  const params = new URLSearchParams({
+    query: query.trim(),
+    take: String(take),
+  });
+  return request<SearchResponse>(`/api/v1/search?${params.toString()}`);
+};
 export const createPlan = (body: PlanRequest) =>
   request<ConciergePlan>("/api/v1/concierge/plan", {
     method: "POST",
@@ -206,3 +251,38 @@ export const rejectCandidate = (planId: string, entityId: string) =>
     `/api/v1/concierge/plan/${encodeURIComponent(planId)}/reject?entity_id=${encodeURIComponent(entityId)}`,
     { method: "POST" },
   );
+
+export function favoriteFromSearch(entity: SearchEntity): Favorite {
+  return {
+    entity_id: entity.entity_id,
+    name: entity.name,
+    entity_type: entity.subtype || entity.type || "urn:entity",
+    image_url: entity.properties?.image?.url ?? null,
+    description: entity.properties?.description ?? null,
+  };
+}
+
+export function unresolvedFavorite(name: string): Favorite {
+  const slug = name
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .slice(0, 48);
+  return {
+    entity_id: `unresolved-${slug || "entity"}`,
+    name,
+    entity_type: "urn:entity",
+    unresolved: true,
+  };
+}
+
+/** Strip UI-only fields before sending favorites to the API. */
+export function favoritesForApi(favorites: Favorite[]): Favorite[] {
+  return favorites.map(({ entity_id, name, entity_type, image_url, description }) => ({
+    entity_id,
+    name,
+    entity_type,
+    image_url: image_url ?? null,
+    description: description ?? null,
+  }));
+}

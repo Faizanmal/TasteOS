@@ -1,37 +1,54 @@
 # Deployment — TasteOS
 
-**Target Architecture:**
-* **Frontend:** Next.js deployed on **Netlify** (via [`netlify.toml`](../netlify.toml))
-* **Backend & Database:** FastAPI & PostgreSQL running in Docker on a **GCP Compute Engine VM** (via [`docker-compose.yml`](../docker-compose.yml))
+**Production architecture**
+
+* **Frontend:** Next.js on **Netlify** — [https://tasteos.netlify.app](https://tasteos.netlify.app) ([`netlify.toml`](../netlify.toml))
+* **Backend API:** FastAPI on **Google Cloud Run** in **live** Qloo mode — [https://tasteos-api-845068580921.us-central1.run.app](https://tasteos-api-845068580921.us-central1.run.app)
+* **OpenAPI:** [https://tasteos-api-845068580921.us-central1.run.app/docs](https://tasteos-api-845068580921.us-central1.run.app/docs)
+* **Optional self-host:** Docker Compose ([`docker-compose.yml`](../docker-compose.yml)) on any VM or laptop
 
 ---
 
 ## Pre-flight (verified locally)
 
+From the repository root:
+
+**Windows (PowerShell)**
+
 ```powershell
-# Backend unit tests
-cd E:\Hackathons\devpost\Qloo\apps\api
+cd path\to\TasteOS\apps\api
 ..\..\.venv\Scripts\python.exe -m pytest -q --ignore=tests/test_qloo_integration.py
 
-# Frontend lint, typecheck, build
 cd ..\web
 npm run lint
 npm run typecheck
 npm run build
+
+cd ..\..
+.\.venv\Scripts\python.exe scripts\scan_bundle_secrets.py
 ```
 
-Verify client bundle contains zero secrets:
-```powershell
-cd E:\Hackathons\devpost\Qloo
-.\.venv\Scripts\python.exe scripts\scan_bundle_secrets.py
+**Linux / macOS**
+
+```bash
+cd path/to/TasteOS/apps/api
+../../.venv/bin/python -m pytest -q --ignore=tests/test_qloo_integration.py
+
+cd ../web
+npm run lint
+npm run typecheck
+npm run build
+
+cd ../..
+.venv/bin/python scripts/scan_bundle_secrets.py
 ```
 
 ---
 
-## 1. Public Git Repository
+## 1. Public Git repository
 
-```powershell
-cd E:\Hackathons\devpost\Qloo
+```bash
+cd path/to/TasteOS
 gh auth login
 gh repo create TasteOS --public --source=. --remote=origin --push
 ```
@@ -40,123 +57,130 @@ Verify that `.env`, `apps/api/.env`, and `apps/web/.env.local` are untracked.
 
 ---
 
-## 2. Backend & Database (GCP Compute Engine VM with Docker)
+## 2. Backend (Google Cloud Run — production)
 
-The backend runs containerized with Docker Compose using [`docker-compose.yml`](../docker-compose.yml) (`api` FastAPI + `db` PostgreSQL 16).
+Production TasteOS API runs on Cloud Run with:
 
-### Step 2.1: Open GCP Firewall Rule
-Allow inbound traffic on port 8000 (and 80/443 if using a reverse proxy):
-```powershell
-gcloud compute firewall-rules create allow-tasteos-backend `
-  --direction=INGRESS `
-  --priority=1000 `
-  --network=default `
-  --action=ALLOW `
-  --rules=tcp:8000,tcp:80,tcp:443 `
-  --source-ranges=0.0.0.0/0 `
-  --target-tags=http-server,https-server
-```
+* `TASTEOS_MODE=live`
+* `QLOO_API_KEY` supplied via Secret Manager / Cloud Run secrets (never in the browser or `NEXT_PUBLIC_*`)
+* `DATABASE_URL` pointing at managed or companion PostgreSQL
+* `FRONTEND_URL` / `CORS_ORIGINS` including `https://tasteos.netlify.app`
 
-### Step 2.2: Create or Select Compute Engine VM
-```powershell
-gcloud compute instances create tasteos-backend-vm `
-  --zone=us-central1-a `
-  --machine-type=e2-medium `
-  --image-family=debian-12 `
-  --image-project=debian-cloud `
-  --tags=http-server,https-server
-```
+Build and deploy the container image from `apps/api` (Dockerfile at repo root or `apps/api` as configured in your project). Example shape (replace project/region/image as needed):
 
-### Step 2.3: SSH into the VM & Install Docker
-```powershell
-gcloud compute ssh tasteos-backend-vm --zone=us-central1-a
-```
-Inside the VM shell:
 ```bash
-sudo apt update && sudo apt install -y git curl docker.io docker-compose-v2
-sudo usermod -aG docker $USER
-newgrp docker
+# Build & push (example)
+gcloud builds submit --tag REGION-docker.pkg.dev/PROJECT/REPO/tasteos-api:latest
+
+# Deploy (wire secrets; do not pass real keys on the CLI in shared logs)
+gcloud run deploy tasteos-api \
+  --image REGION-docker.pkg.dev/PROJECT/REPO/tasteos-api:latest \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars "TASTEOS_MODE=live,QLOO_BASE_URL=https://hackathon.api.qloo.com,FRONTEND_URL=https://tasteos.netlify.app" \
+  --set-secrets "QLOO_API_KEY=QLOO_API_KEY:latest,DATABASE_URL=DATABASE_URL:latest"
 ```
 
-### Step 2.4: Clone Repo & Configure Environment
+Confirm:
+
+```bash
+curl -fsS "https://tasteos-api-845068580921.us-central1.run.app/health"
+curl -fsS "https://tasteos-api-845068580921.us-central1.run.app/api/v1/mode"
+```
+
+Expect `mode` to report **live** with `qloo_key_configured: true` (boolean only — never the key).
+
+### Environment variables (placeholders only)
+
+| Variable | Placeholder | Notes |
+| --- | --- | --- |
+| `TASTEOS_MODE` | `live` | Production Cloud Run |
+| `QLOO_API_KEY` | `your-qloo-hackathon-key` | Secret Manager |
+| `QLOO_BASE_URL` | `https://hackathon.api.qloo.com` | Hackathon host |
+| `DATABASE_URL` | `postgresql+psycopg://USER:PASSWORD@HOST:5432/tasteos` | Server-side only |
+| `FRONTEND_URL` | `https://tasteos.netlify.app` | CORS primary origin |
+| `CORS_ORIGINS` | `https://tasteos.netlify.app` | Optional extras |
+
+---
+
+## 3. Optional self-host (Docker Compose)
+
+Use when you want a local or VM replica. This is **not** the public production path.
+
 ```bash
 git clone <YOUR_REPO_URL> TasteOS
 cd TasteOS
 
 cat << 'EOF' > .env
 APP_ENV=production
-TASTEOS_MODE=demo
+TASTEOS_MODE=live
 QLOO_BASE_URL=https://hackathon.api.qloo.com
-QLOO_API_KEY=
+QLOO_API_KEY=your-qloo-hackathon-key
 FRONTEND_URL=https://YOUR-SITE-NAME.netlify.app
 CORS_ORIGINS=https://YOUR-SITE-NAME.netlify.app,http://localhost:3000
 POSTGRES_USER=tasteos
-POSTGRES_PASSWORD=tasteos_secure_password
+POSTGRES_PASSWORD=CHANGE_ME
 POSTGRES_DB=tasteos
+DATABASE_URL=postgresql+psycopg://tasteos:CHANGE_ME@db:5432/tasteos
 EOF
-```
 
-### Step 2.5: Launch Stack & Run Migrations
-```bash
-# Launch PostgreSQL + FastAPI
 docker compose up -d --build
-
-# Run Alembic migrations against PostgreSQL
 docker compose exec api alembic upgrade head
-
-# Healthcheck
 curl -fsS http://localhost:8000/health
 curl -fsS http://localhost:8000/api/v1/mode
 ```
 
 > [!IMPORTANT]
-> **Mixed Content Notice:** Netlify serves frontends over HTTPS (`https://*.netlify.app`). Modern browsers block requests from HTTPS sites to unencrypted HTTP backends (`http://<VM_IP>:8000`). To provide HTTPS on the VM:
-> * **Option A (Instant & Free):** Run Cloudflare Tunnel inside Docker on the VM:
->   ```bash
->   docker run -d --restart unless-stopped --network host cloudflare/cloudflared:latest tunnel --url http://localhost:8000
->   ```
->   Check `docker logs <container-id>` for your generated `https://xxxx.trycloudflare.com` URL.
-> * **Option B:** Map a domain to your VM external IP and configure Caddy/Nginx for automatic Let's Encrypt SSL.
+> Netlify is HTTPS. Browsers block HTTPS pages calling plain HTTP APIs. Expose the Compose API over HTTPS (Cloudflare Tunnel, Caddy, or a reverse proxy) before pointing Netlify at it.
 
 ---
 
-## 3. Frontend (Netlify)
+## 4. Frontend (Netlify)
 
-The project includes [`netlify.toml`](../netlify.toml) configured for Next.js App Router and `@netlify/plugin-nextjs`.
+[`netlify.toml`](../netlify.toml) configures Next.js App Router and `@netlify/plugin-nextjs`.
 
-### Step 3.1: Connect Repository
+### Connect repository
+
 1. Log in to [app.netlify.com](https://app.netlify.com).
-2. Click **Add new site** $\to$ **Import an existing project**.
-3. Authorize GitHub/GitLab and select the `TasteOS` repository.
+2. **Add new site** → **Import an existing project**.
+3. Select the `TasteOS` repository.
 
-### Step 3.2: Confirm Build Settings
-Netlify will auto-detect [`netlify.toml`](../netlify.toml):
+### Build settings
+
 * **Base directory:** `apps/web`
 * **Build command:** `npm run build`
 * **Publish directory:** `.next`
 
-### Step 3.3: Set Environment Variable
-Under **Site configuration** $\to$ **Environment variables**, add:
-* `NEXT_PUBLIC_API_BASE_URL`: Your backend HTTPS URL (e.g. your Cloudflare tunnel HTTPS URL or custom domain HTTPS URL).
+### Environment variable
 
-### Step 3.4: Deploy
-1. Click **Deploy Site**.
-2. Note your assigned Netlify URL (e.g. `https://tasteos-concierge.netlify.app`).
-3. Update `FRONTEND_URL` in `.env` on your GCP VM to match this origin, then reload the API:
-   ```bash
-   docker compose restart api
-   ```
+| Variable | Value |
+| --- | --- |
+| `NEXT_PUBLIC_API_BASE_URL` | `https://tasteos-api-845068580921.us-central1.run.app` |
+
+### Deploy
+
+1. Deploy the site.
+2. Confirm the Netlify URL (`https://tasteos.netlify.app`).
+3. Ensure Cloud Run `FRONTEND_URL` / `CORS_ORIGINS` include that exact origin.
+
+### Verified live deployments
+
+| Service | Host | Live URL | Status |
+| --- | --- | --- | --- |
+| **Frontend UI** | Netlify | https://tasteos.netlify.app | Live |
+| **Backend API** | GCP Cloud Run (live Qloo) | https://tasteos-api-845068580921.us-central1.run.app | Live |
+| **OpenAPI Docs** | GCP Cloud Run | https://tasteos-api-845068580921.us-central1.run.app/docs | Live |
 
 ---
 
-## 4. Production Verification Checklist
+## 5. Production verification checklist
 
-- [ ] Frontend loads over HTTPS (`https://*.netlify.app`)  
-- [ ] `GET {API}/health` $\to$ 200 `status=ok`  
-- [ ] `GET {API}/api/v1/mode` $\to$ no secrets in body  
-- [ ] Browser Network tab: frontend calls API without CORS or mixed content errors  
-- [ ] Demo Concierge journey: select 3 profiles $\to$ build plan $\to$ reject pick $\to$ primary updates  
-- [ ] PostgreSQL tables verified (`taste_profiles`, `recommendations`)  
+- [x] Frontend loads over HTTPS (`https://tasteos.netlify.app`)
+- [x] `GET {API}/health` → 200 `status=ok`
+- [x] `GET {API}/api/v1/mode` → `live`, no secrets in body
+- [x] Browser Network tab: frontend calls API without CORS or mixed content errors
+- [ ] Concierge journey: select 3 profiles → build plan → reject pick → primary updates
+- [ ] PostgreSQL tables verified (`taste_profiles`, `recommendations`)
 
 ---
 
@@ -164,16 +188,17 @@ Under **Site configuration** $\to$ **Environment variables**, add:
 
 | Symptom | Fix |
 | --- | --- |
-| Browser blocks API request (`Mixed Content`) | Frontend is HTTPS, but API is HTTP. Expose port 8000 with Cloudflare tunnel or Caddy SSL. |
-| CORS errors in browser | `FRONTEND_URL` in VM `.env` must match the exact Netlify domain (`https://….netlify.app`). |
-| API 503 `database_unavailable` | Ensure `db` container is healthy (`docker compose ps`), check `DATABASE_URL`. |
-| Alembic migration failure | Run `docker compose exec api alembic upgrade head`. |
-| 401 from Qloo | Confirm `QLOO_BASE_URL` is `https://hackathon.api.qloo.com` and `QLOO_API_KEY` is set. |
+| Browser blocks API request (`Mixed Content`) | Frontend is HTTPS; API must be HTTPS (Cloud Run already is). |
+| CORS errors in browser | `FRONTEND_URL` / `CORS_ORIGINS` on the API must match the exact Netlify origin. |
+| API 503 `database_unavailable` | Check `DATABASE_URL` and DB connectivity from Cloud Run. |
+| Alembic migration failure (Compose) | `docker compose exec api alembic upgrade head` |
+| 401 from Qloo | Confirm `QLOO_BASE_URL` is `https://hackathon.api.qloo.com` and `QLOO_API_KEY` is set on the service. |
+| `signal_entity_count` is 0 | Favorites need real Qloo UUIDs (Search) or resolvable demo seeds; invalid IDs are skipped with a limitation note. |
 
 ---
 
-## Security Reminders
+## Security reminders
 
 - Never put `QLOO_API_KEY` or `DATABASE_URL` in `NEXT_PUBLIC_*` or client bundles.
-- Keep `.env` files server-side only on the VM.
+- Store production secrets in Secret Manager / the host secret store — not in git.
 - See [SECURITY.md](SECURITY.md).

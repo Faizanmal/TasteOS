@@ -7,9 +7,16 @@ import { ModeBanner } from "@/components/mode-banner";
 import {
   createProfile,
   Favorite,
+  favoriteFromSearch,
+  favoritesForApi,
   isDemoProfile,
+  isQlooEntityId,
+  isUnresolvedFavorite,
   Profile,
   profileLabel,
+  searchEntities,
+  SearchEntity,
+  unresolvedFavorite,
   updateProfile,
 } from "@/lib/api";
 import { clearPlanCache, readProfiles, writeProfiles } from "@/lib/session";
@@ -18,17 +25,34 @@ type Draft = {
   display_name: string;
   preferencesText: string;
   exclusionsText: string;
-  favoritesText: string;
+  favorites: Favorite[];
+  favoriteInput: string;
 };
+
+type PendingPick = {
+  profileId: string;
+  query: string;
+  results: SearchEntity[];
+};
+
+function normalizeFavorite(favorite: Favorite): Favorite {
+  if (isQlooEntityId(favorite.entity_id)) {
+    return { ...favorite, unresolved: false };
+  }
+  if (favorite.entity_id.startsWith("demo-")) {
+    // Demo seed IDs are fine in demo mode; live backend resolves them.
+    return { ...favorite, unresolved: false };
+  }
+  return { ...favorite, unresolved: true };
+}
 
 function toDraft(profile: Profile): Draft {
   return {
     display_name: profile.display_name,
     preferencesText: (profile.explicit_preferences || []).join(", "),
     exclusionsText: (profile.exclusions || []).join(", "),
-    favoritesText: (profile.favorites || [])
-      .map((f) => f.name)
-      .join(", "),
+    favorites: (profile.favorites || []).map(normalizeFavorite),
+    favoriteInput: "",
   };
 }
 
@@ -38,23 +62,6 @@ function parseList(raw: string): string[] {
     .map((part) => part.trim())
     .filter(Boolean)
     .slice(0, 20);
-}
-
-function favoritesFromNames(
-  names: string[],
-  previous: Favorite[],
-): Favorite[] {
-  return names.map((name, index) => {
-    const existing = previous.find(
-      (f) => f.name.toLowerCase() === name.toLowerCase(),
-    );
-    if (existing) return existing;
-    return {
-      entity_id: `local-${index}-${name.toLowerCase().replace(/\s+/g, "-").slice(0, 40)}`,
-      name,
-      entity_type: "urn:entity:place",
-    };
-  });
 }
 
 function initialDrafts(profiles: Profile[]): Record<string, Draft> {
@@ -74,12 +81,105 @@ export default function EditPreferencesPage() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [pendingPick, setPendingPick] = useState<PendingPick | null>(null);
 
   function updateDraft(id: string, patch: Partial<Draft>) {
     setDrafts((current) => ({
       ...current,
       [id]: { ...current[id], ...patch },
     }));
+  }
+
+  function removeFavorite(profileId: string, entityId: string) {
+    const draft = drafts[profileId];
+    if (!draft) return;
+    updateDraft(profileId, {
+      favorites: draft.favorites.filter((f) => f.entity_id !== entityId),
+    });
+    if (pendingPick?.profileId === profileId) {
+      setPendingPick(null);
+    }
+  }
+
+  function commitFavorite(profileId: string, favorite: Favorite) {
+    const draft = drafts[profileId];
+    if (!draft) return;
+    const exists = draft.favorites.some(
+      (f) =>
+        f.entity_id === favorite.entity_id ||
+        f.name.toLowerCase() === favorite.name.toLowerCase(),
+    );
+    if (exists) {
+      updateDraft(profileId, {
+        favorites: draft.favorites.map((f) =>
+          f.name.toLowerCase() === favorite.name.toLowerCase() ? favorite : f,
+        ),
+        favoriteInput: "",
+      });
+    } else {
+      updateDraft(profileId, {
+        favorites: [...draft.favorites, favorite].slice(0, 20),
+        favoriteInput: "",
+      });
+    }
+    setPendingPick(null);
+  }
+
+  async function resolveAndAddFavorite(profileId: string) {
+    const draft = drafts[profileId];
+    const query = draft?.favoriteInput.trim() || "";
+    if (!query) return;
+
+    setResolvingId(profileId);
+    setError("");
+    setPendingPick(null);
+    try {
+      const response = await searchEntities(query, 6);
+      const results = response.results || [];
+      if (results.length === 0) {
+        commitFavorite(profileId, unresolvedFavorite(query));
+        setStatus(
+          `"${query}" was saved without a Qloo ID — it will not influence recommendations.`,
+        );
+        return;
+      }
+      if (results.length === 1) {
+        commitFavorite(profileId, favoriteFromSearch(results[0]));
+        return;
+      }
+      // Multiple matches: auto-highlight top, let the user confirm or pick another.
+      setPendingPick({ profileId, query, results });
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not search for that favorite.",
+      );
+    } finally {
+      setResolvingId(null);
+    }
+  }
+
+  function pickSearchResult(entity: SearchEntity) {
+    if (!pendingPick) return;
+    commitFavorite(pendingPick.profileId, favoriteFromSearch(entity));
+  }
+
+  function acceptTopMatch() {
+    if (!pendingPick?.results[0]) return;
+    pickSearchResult(pendingPick.results[0]);
+  }
+
+  function keepUnresolvedFromPick() {
+    if (!pendingPick) return;
+    commitFavorite(
+      pendingPick.profileId,
+      unresolvedFavorite(pendingPick.query),
+    );
+    setStatus(
+      `"${pendingPick.query}" was saved without a Qloo ID — it will not influence recommendations.`,
+    );
   }
 
   async function saveAll() {
@@ -101,10 +201,7 @@ export default function EditPreferencesPage() {
           display_name: draft.display_name.trim(),
           explicit_preferences: parseList(draft.preferencesText),
           exclusions: parseList(draft.exclusionsText),
-          favorites: favoritesFromNames(
-            parseList(draft.favoritesText),
-            profile.favorites || [],
-          ),
+          favorites: favoritesForApi(draft.favorites),
         };
 
         if (isDemoProfile(profile)) {
@@ -128,6 +225,7 @@ export default function EditPreferencesPage() {
       const next: Record<string, Draft> = {};
       for (const profile of saved) next[profile.id] = toDraft(profile);
       setDrafts(next);
+      setPendingPick(null);
       setStatus(
         "Preferences saved. Demo profiles were cloned to editable anonymous profiles when needed.",
       );
@@ -158,9 +256,9 @@ export default function EditPreferencesPage() {
           <h1>Edit cultural preferences.</h1>
         </div>
         <p>
-          Favorites, soft preferences, and hard exclusions. Demo profiles are
-          cloned into anonymous editable copies when you save — no unnecessary
-          personal data.
+          Favorites resolve through Qloo search so live plans use real entity
+          IDs. Demo profiles are cloned into anonymous editable copies when you
+          save — no unnecessary personal data.
         </p>
       </header>
 
@@ -187,6 +285,10 @@ export default function EditPreferencesPage() {
           <div className="editor-grid">
             {profiles.map((profile, index) => {
               const draft = drafts[profile.id] || toDraft(profile);
+              const unresolvedCount = draft.favorites.filter((f) =>
+                isUnresolvedFavorite(f),
+              ).length;
+              const showPicker = pendingPick?.profileId === profile.id;
               return (
                 <section
                   className="editor-card"
@@ -195,7 +297,9 @@ export default function EditPreferencesPage() {
                 >
                   <div className="meta">
                     Profile 0{index + 1}
-                    {isDemoProfile(profile) ? " · Demo (clone on save)" : " · Custom"}
+                    {isDemoProfile(profile)
+                      ? " · Demo (clone on save)"
+                      : " · Custom"}
                   </div>
                   <div className="field">
                     <label htmlFor={`name-${profile.id}`}>Display name</label>
@@ -211,17 +315,120 @@ export default function EditPreferencesPage() {
                   </div>
                   <div className="field">
                     <label htmlFor={`fav-${profile.id}`}>
-                      Favorite entities (comma-separated names)
+                      Favorite entities
                     </label>
-                    <input
-                      id={`fav-${profile.id}`}
-                      value={draft.favoritesText}
-                      onChange={(e) =>
-                        updateDraft(profile.id, {
-                          favoritesText: e.target.value,
+                    <div className="favorite-chips" aria-live="polite">
+                      {draft.favorites.length === 0 ? (
+                        <span className="favorite-empty">No favorites yet</span>
+                      ) : (
+                        draft.favorites.map((fav) => {
+                          const unresolved = isUnresolvedFavorite(fav);
+                          return (
+                            <span
+                              className={
+                                unresolved
+                                  ? "favorite-chip unresolved"
+                                  : "favorite-chip"
+                              }
+                              key={`${fav.entity_id}-${fav.name}`}
+                            >
+                              <span>{fav.name}</span>
+                              <button
+                                type="button"
+                                className="favorite-chip-remove"
+                                aria-label={`Remove ${fav.name}`}
+                                onClick={() =>
+                                  removeFavorite(profile.id, fav.entity_id)
+                                }
+                              >
+                                ×
+                              </button>
+                            </span>
+                          );
                         })
-                      }
-                    />
+                      )}
+                    </div>
+                    {unresolvedCount > 0 && (
+                      <p className="favorite-hint">
+                        {unresolvedCount === 1
+                          ? "1 favorite has no Qloo ID and will not influence recommendations."
+                          : `${unresolvedCount} favorites have no Qloo ID and will not influence recommendations.`}
+                      </p>
+                    )}
+                    <div className="favorite-add-row">
+                      <input
+                        id={`fav-${profile.id}`}
+                        value={draft.favoriteInput}
+                        onChange={(e) =>
+                          updateDraft(profile.id, {
+                            favoriteInput: e.target.value,
+                          })
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void resolveAndAddFavorite(profile.id);
+                          }
+                        }}
+                        placeholder="e.g. Radiohead"
+                        disabled={resolvingId === profile.id}
+                      />
+                      <button
+                        className="button secondary favorite-add-btn"
+                        type="button"
+                        disabled={
+                          saving ||
+                          resolvingId === profile.id ||
+                          !draft.favoriteInput.trim()
+                        }
+                        onClick={() => void resolveAndAddFavorite(profile.id)}
+                      >
+                        {resolvingId === profile.id ? "…" : "Add"}
+                      </button>
+                    </div>
+                    {showPicker && pendingPick && (
+                      <div className="favorite-picker" role="listbox">
+                        <p className="favorite-hint">
+                          Multiple matches — pick one, or use the top result.
+                        </p>
+                        <ul>
+                          {pendingPick.results.map((result, i) => (
+                            <li key={result.entity_id}>
+                              <button
+                                type="button"
+                                className={
+                                  i === 0
+                                    ? "favorite-pick-option top"
+                                    : "favorite-pick-option"
+                                }
+                                onClick={() => pickSearchResult(result)}
+                              >
+                                <strong>{result.name}</strong>
+                                <span>
+                                  {result.subtype || result.type || "entity"}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                        <div className="favorite-picker-actions">
+                          <button
+                            type="button"
+                            className="button"
+                            onClick={acceptTopMatch}
+                          >
+                            Use top match
+                          </button>
+                          <button
+                            type="button"
+                            className="button secondary"
+                            onClick={keepUnresolvedFromPick}
+                          >
+                            Keep name only
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="field">
                     <label htmlFor={`pref-${profile.id}`}>
